@@ -1,0 +1,4 @@
+*.R linguist-detectable
+*.Rmd linguist-detectable
+*.Rproj linguist-language=R
+*.html linguist-vendored
