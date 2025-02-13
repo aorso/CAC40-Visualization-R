@@ -1,0 +1,41 @@
+company_name;sector;stock_price;Ticker;shares_outstanding_millions;capitalization_in_billion;proportion_ds_indice;dividend_2023_in_millions;part_dividende_2023;stock_price_5jan;stock_price_30dec
+LVMH;Consommation;635,4;MC;500;317,7;0,1335;6500;0,078351013;611,3;632,3
+Hermès International;Consommation;2 301,00;RMS;106;243,91;0,1025;2650;0,031943105;2237;2300
+L'Oréal;Consommation;338,1;OR;541;182,65;0,0767;3960;0,047733848;332;337,95
+Schneider Electric;Industriels;241,6;SU;574;138,67;0,0583;5000;0,06027001;240,2;240,05
+TotalEnergies;Énergie;53,73;TTE;2 382;127,96;0,0538;7500;0,090405014;54;52,31
+Airbus Group;Industriels;160,14;AIR;763;122,16;0,0513;2200;0,026518804;158,58;154,26
+Sanofi;Santé;94,32;SAN;1 255;118,41;0,0497;4700;0,056653809;92,87;93,29
+EssilorLuxottica;Santé;234,2;EL;460;107,73;0,0453;2200;0,026518804;230,2;233
+Air Liquide;Matériaux;155,86;AI;583;90,74;0,0381;3400;0,040983607;154,64;155,36
+Safran;Industriels;214,9;SAF;417;89,66;0,0377;1000;0,012054002;211,6;214
+Axa;Financiers;34,42;CS;2 209;75,99;0,0319;4800;0,057859209;34,07;34,42
+BNP Paribas;Financiers;59,25;BNP;1 130;66,97;0,0281;5700;0,068707811;58,49;59,18
+Vinci;Industriels;99,7;DG;582;58,03;0,0244;2500;0,030135005;98,92;98,64
+Dassault Systèmes;Technologie;33,1;DSY;1 354;44,84;0,0188;600;0,007232401;32,52;33,13
+Danone;Consommation;64,88;BN;682;44,25;0,0186;1400;0,016875603;64,74;64,88
+Saint-Gobain;Industriels;85,76;SGO;499;42,77;0,018;1200;0,014464802;83,9;85,6
+Crédit Agricole;Financiers;13,34;ACA;3 030;40,42;0,017;3100;0,037367406;13,215;13,345
+Engie;Services aux collectivités;15,53;ENGI;2 400;37,27;0,0157;3500;0,042189007;15,62;15,555
+Stellantis;Consommation;12,63;STLA;2 922;36,92;0,0155;4800;0,057859209;12,184;12,514
+Kering;Consommation;235,85;KER;126;29,71;0,0125;1700;0,020491803;224,35;235,05
+Thales;Industriels;137,6;HO;213;29,3;0,0123;700;0,008437801;136,7;137,4
+Pernod Ricard;Consommation;108,6;RI;265;28,77;0,0121;1100;0,013259402;105,25;108,8
+Capgemini;Technologie;156,65;CAP;171;26,78;0,0112;600;0,007232401;155;156,85
+Publicis Groupe;Services de communication;103,15;PUB;250;25,79;0,0108;800;0,009643202;100,45;103,25
+Orange;Services de communication;9,7;ORA;2 600;25,22;0,0106;1900;0,022902604;9,636;9,59
+Legrand;Industriels;93,7;LR;270;25,3;0,0106;1200;0,014464802;92,54;93,88
+Michelin;Consommation;32,17;ML;710;22,83;0,0096;1000;0,012054002;31,32;31,91
+STMicroelectronics;Technologie;23,79;STM;910;21,64;0,0091;300;0,003616201;23,48;24,15
+Société Générale;Financiers;27,08;GLE;834;22,58;0,0095;1000;0,012054002;26,525;27,08
+Veolia Environnement;Services aux collectivités;27,23;VIE;550;20,28;0,0085;900;0,010848602;26,72;27,23
+ArcelorMittal;Matériaux;22,51;MT;1 000;22,51;0,0095;400;0,004821601;21,46;22,18
+Renault;Consommation;47,06;RNO;295;13,88;0,0058;600;0,007232401;46,08;46,95
+Bureau Veritas;Industriels;29,08;BVI;450;13,09;0,0055;350;0,004218901;28,9;28,94
+Accor;Consommation;47,13;AC;250;11,78;0,0049;300;0,003616201;45,99;47,01
+Bouygues;Industriels;28,85;EN;380;10,97;0,0046;700;0,008437801;28,73;28,9
+Unibail-Rodamco-Westfield;Immobilier;73,52;URW;138;10,14;0,0043;1000;0,012054002;73,74;73,54
+Eurofins Scientific;Santé;48,77;ERF;200;9,75;0,0041;100;0,0012054;48,57;48,8
+Carrefour;Consommation;13,67;CA;756;10,34;0,0043;700;0,008437801;13,535;13,65
+Edenred;Financiers;31,16;EDEN;250;7,79;0,0033;300;0,003616201;30,62;31,16
+Teleperformance;Services de communication;82,9;TEP;60;4,97;0,0021;600;0,007232401;82,78;82,9

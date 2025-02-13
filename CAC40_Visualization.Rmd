@@ -1,0 +1,1347 @@
+---
+title: "CAC 40 Vizualization"
+author: "Orso PAOLI"
+date: "06/01/2025"
+output:
+  html_document:
+    toc: true          
+    toc_float: true    
+    number_sections: true 
+    theme: lumen      
+---
+
+
+
+ 
+```{r setup, include=FALSE}
+## Global options
+knitr::opts_chunk$set(cache = FALSE,
+    warning = FALSE,
+    message = FALSE,
+    fig.retina = 2,
+    fig.height = 6, fig.width = 12)
+options(encoding = 'UTF-8')
+```
+
+
+```{r libary loading, echo=FALSE}
+
+required_packages <- c(
+  "dplyr", "ggplot2", "lubridate", "waffle", "RColorBrewer", "ggridges", 
+  "sf", "rnaturalearth", "rnaturalearthdata", "viridis", "IRdisplay", 
+  "tidyverse", "plotly", "corrplot", "tidymodels", "GGally", "broom", 
+  "rsample", "forecast", "fable", "feasts", "ggthemes", "cowplot", 
+  "colorspace", "kableExtra", "quantmod", "ggtext", "yardstick","knitr"
+)
+
+install_and_load <- function(packages) {
+  for (pkg in packages) {
+    if (!requireNamespace(pkg, quietly = TRUE)) {
+      install.packages(pkg, dependencies = TRUE)
+    }
+    library(pkg, character.only = TRUE)
+  }
+}
+
+install_and_load(required_packages)
+
+```
+
+
+
+# Introduction
+The CAC 40, the main stock market index of the Paris stock exchange, is a key indicator of the state of the French and European economy. Bringing together the 40 largest French market capitalizations listed on Euronext Paris, this index provides a representative synthesis of the performance of leading companies in strategic sectors such as industry, finance, and technology. It plays a central role in investor decision-making, economic cycle analysis, and assessing the competitiveness of French companies on a global scale.
+
+In an economic context marked by the COVID-19 pandemic, rising interest rates, and geopolitical tensions, it becomes crucial to examine the key factors driving fluctuations in the CAC 40. This project aims to achieve two main objectives: first, to analyze the sectoral structure of the index to identify internal dynamics affecting its performance; and second, to study the correlations between the CAC 40 and macroeconomic variables such as interest rates and currency fluctuations.
+
+To this end, we will combine traditional statistical approaches and machine learning tools, enriched with graphical visualizations and predictive models. This methodology will provide a comprehensive and rigorous analysis of the phenomena under study. Finally, a reflection on the practical implications of these results will be conducted, offering insights for both investors and financial analysts to inform their strategic decisions.
+
+# Data Import and Preparation
+## Raw Data
+
+
+```{r, echo=FALSE}
+
+cac40_composition <- read.csv2("Data/cac40_composition.csv", stringsAsFactors = FALSE)
+euribor_3m_rate <- read.csv("Data/euribor_3m_rate.csv", sep = ";")
+france_unemployment_rate <- read.csv("Data/france_unemployment_rate.csv", sep = ";") 
+
+# Load the datasets
+eur_usd_rate <- read.csv2("Data/eur_usd_rate.csv")
+sp500_data <- read.csv2("Data/sp500_data.csv")
+cac40_data <- read.csv2("Data/cac40_data.csv")
+urw_data <- read.csv2("Data/urw_data.csv")
+
+# Convert "Date" columns to Date format according to their specific formats
+eur_usd_rate$Date <- as.Date(eur_usd_rate$Date, format = "%d/%m/%Y")    # Format "24/02/2000"
+sp500_data$Date <- as.Date(sp500_data$Date, format = "%d/%m/%Y")  # Format "24/02/2000"
+urw_data$Date <- as.Date(urw_data$Date, format = "%d/%m/%Y")   # Format "24/02/2000"
+cac40_data$Date <- as.Date(cac40_data$Date, format = "%m/%d/%Y")  # Format "12/18/2024"
+
+# Define the complete date sequence
+start_date <- as.Date("2000-01-03")
+end_date <- as.Date("2024-01-03")
+complete_dates <- tibble(Date = seq.Date(from = start_date, to = end_date, by = "day"))
+
+# Function to fill missing dates with NA
+fill_missing_dates <- function(data) {
+  complete_dates %>%
+    left_join(data, by = "Date")  # Merge data with all dates
+}
+
+# Fill each table with missing days to facilitate merging later
+eur_usd_rate <- fill_missing_dates(eur_usd_rate)
+sp500_data <- fill_missing_dates(sp500_data)
+cac40_data <- fill_missing_dates(cac40_data)
+urw_data <- fill_missing_dates(urw_data)
+
+# Merge the four tables
+daily_data <- eur_usd_rate %>%
+  full_join(sp500_data, by = "Date") %>%
+  full_join(cac40_data, by = "Date") %>%
+  full_join(urw_data, by = "Date")
+```
+
+
+The files used contain economic, financial, and stock market information necessary to analyze variations in the CAC 40. Below is an overview of the files and their contents:
+
+1. **cac40_composition.csv**: List of companies composing the CAC 40, including their sectoral and financial characteristics.
+2. **euribor_3m_rate.csv**: Historical data on the 3-month Euribor rates.
+3. **france_unemployment_rate.csv**: Annual data on the unemployment rate in France.
+4. **daily_data.csv**: Daily data on the evolution of the CAC 40, S&P 500, the euro/USD exchange rate, and other financial variables.
+
+The Euribor rates and unemployment rate were not integrated into the `daily_data` table, as they are reported at monthly and annual frequencies, respectively, unlike the variables in `daily_data.csv`, which are recorded on a daily basis.
+
+
+
+
+```{r data_dimensions, echo=FALSE}
+# Calculate the dimensions of the datasets
+dimensions <- tibble(
+  "File Name" = c("cac40_composition", "euribor_3m_rate", "france_unemployment_rate", "daily_data"),
+  "Number of Rows" = c(nrow(cac40_composition), nrow(euribor_3m_rate), nrow(france_unemployment_rate), nrow(daily_data)),
+  "Number of Columns" = c(ncol(cac40_composition), ncol(euribor_3m_rate), ncol(france_unemployment_rate), ncol(daily_data))
+)
+
+# Display the dimensions
+knitr::kable(dimensions, caption = "Dataset Dimensions") %>%
+  kableExtra::kable_styling(full_width = FALSE)
+
+```
+
+## Variable Typing
+
+The next step is to adjust the variables based on their meaning. Most of them are imported as character strings (`chr`). Therefore, it is necessary to convert dates to the `Date` format, numbers to `numeric`, etc.
+
+```{r, echo=FALSE}
+daily_data$Date <- as.Date(daily_data$Date, format = "%d/%m/%Y") 
+daily_data <- daily_data %>%
+  mutate(across(where(is.character), ~ as.numeric(gsub(",", ".", .))))
+
+daily_data <- daily_data %>% arrange(Date)  # Ensure that the data is sorted by date
+
+france_unemployment_rate$Date <- as.Date(paste0(france_unemployment_rate$Date, "-01-01"), format = "%Y-%m-%d")
+
+france_unemployment_rate <- france_unemployment_rate %>%
+  mutate(across(where(is.character), ~ as.numeric(gsub(",", ".", .))))
+
+euribor_3m_rate$Date <- as.Date(euribor_3m_rate$date, format = "%d/%m/%Y")
+euribor_3m_rate <- euribor_3m_rate %>%
+  mutate(across(where(is.character), ~ as.numeric(gsub(",", ".", .))))
+
+euribor_3m_rate <- euribor_3m_rate %>%
+  select(-date)
+
+cac40_composition <- cac40_composition %>%
+  mutate(
+    stock_price = as.numeric(gsub(",", ".", stock_price)),  # Replace commas with dots before conversion
+    shares_outstanding_millions = as.numeric(shares_outstanding_millions)  # Direct conversion if there are no special characters
+  )
+
+```
+
+After adjusting the data types to ensure consistency with the intended analyses, we provide below a detailed description of the variables present in each dataset, specifying their role and meaning within the scope of this study.
+
+```{r data_description, echo=FALSE}
+# Function to describe the variables in a dataset
+describe_variables <- function(data, dataset_name, descriptions) {
+  tibble(
+    "Variable Name" = colnames(data),
+    "Type" = sapply(data, class),
+    "Description" = descriptions
+  ) %>%
+    mutate(
+      "Dataset" = dataset_name
+    )
+}
+
+# Define the variable descriptions for each table
+descriptions_cac40_composition <- c(
+  "Name of the listed company",
+  "Company's business sector",
+  "Company's stock price",
+  "Company's ticker symbol (stock symbol)",
+  "Number of shares in millions",
+  "Market capitalization in billions",
+  "Weight in the CAC 40 index",
+  "Dividends paid in 2023 (in millions)",
+  "Proportion of total dividends in 2023",
+  "Stock price on January 5th",
+  "Stock price on December 30th"
+)
+
+descriptions_euribor_3m_rate <- c(
+  "Recording date",
+  "3-month Euribor rate"
+)
+
+descriptions_france_unemployment_rate <- c(
+  "Recording year",
+  "Annual unemployment rate"
+)
+
+descriptions_daily_data <- c(
+  "Recording date",
+  "EUR/USD exchange rate",
+  "S&P 500 index price",
+  "CAC 40 index price",
+  "Unibail-Rodamco-Westfield stock price"
+)
+
+# Create descriptions for each dataset
+descriptions <- bind_rows(
+  describe_variables(cac40_composition, "cac40_composition", descriptions_cac40_composition),
+  describe_variables(euribor_3m_rate, "euribor_3m_rate", descriptions_euribor_3m_rate),
+  describe_variables(france_unemployment_rate, "france_unemployment_rate", descriptions_france_unemployment_rate),
+  describe_variables(daily_data, "daily_data", descriptions_daily_data)
+)
+
+# Display the descriptive table
+descriptions %>%
+  select("Dataset", "Variable Name", "Type", "Description") %>%
+  knitr::kable(caption = "Variable Description") %>%
+  kableExtra::kable_styling(full_width = FALSE)
+
+```
+
+## Managing Missing Values
+
+The data used in this study was collected over a 23-year period with daily granularity, limited to business days. While necessary to reflect financial market dynamics, this characteristic inevitably results in missing values for certain days, particularly due to public holidays or periods without trading.
+
+To maintain the integrity of the time series and avoid significant data loss, we opted for linear interpolation of missing values. This method estimates missing values based on adjacent data, ensuring continuity in the analysis while minimizing potential distortions.
+
+This methodological choice is justified by the length of the study period (23 years), which helps mitigate the impact of estimates on overall conclusions. Moreover, systematically removing rows with missing values would have significantly reduced the volume of usable data, risking biased results or limiting the scope of the analysis.
+
+```{r interpolate_missing_values, echo=FALSE}
+# Function to interpolate NA values in a column
+interpolate_column <- function(column, dates) {
+  if (all(is.na(column))) {
+    return(rep(NA, length(column)))  # If the entire column is NA, return it unchanged
+  }
+  approx(x = dates[!is.na(column)], 
+         y = column[!is.na(column)], 
+         xout = dates, 
+         rule = 2)$y  # rule = 2: Extrapolation for NA at the beginning/end
+}
+
+# Apply interpolation to all columns (except Date)
+daily_data <- daily_data %>%
+  mutate(across(-Date, ~ interpolate_column(., as.numeric(Date))))
+
+```
+
+```{r na_summary_table, echo=FALSE}
+# Calculate the number of missing values per column
+na_summary <- daily_data %>%
+  summarise(across(everything(), ~ sum(is.na(.)))) %>%
+  pivot_longer(cols = everything(), names_to = "Variable", values_to = "Number_NA") %>%
+  arrange(desc(Number_NA))
+
+# Create the table with kableExtra
+na_summary %>%
+  knitr::kable(
+    col.names = c("Variable", "Number of Missing Values"),
+    format = "html",
+    align = "lc"
+  ) %>%
+  kableExtra::kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+
+```
+
+
+
+
+# Sector Composition and Characteristics of the CAC 40
+
+## Sectoral Distribution
+En tant qu’indice de référence de la place de Paris, le CAC 40 regroupe les quarante principales entreprises cotées sur Euronext Paris. La composition sectorielle de cet indice met en lumière une forte concentration autour de quelques secteurs spécifiques, en faisant un reflet pertinent des dynamiques économiques françaises.
+
+```{r sector_distribution, echo=FALSE}
+# Calculate the sectoral distribution in the total capitalization of the CAC 40
+pie_data <- cac40_composition %>%
+  filter(!is.na(sector)) %>%
+  group_by(sector) %>%
+  summarise(
+    total_capitalization = sum(as.numeric(capitalization_in_billion), na.rm = TRUE)
+  ) %>%
+  mutate(
+    proportion = total_capitalization / sum(total_capitalization) * 100,
+    label = paste0(round(proportion, 1), "%") # Create percentage labels
+  )
+
+custom_colors <- c("#FF9999", "#66B3FF", "#99FF99", "#FFCC99", "#CCCCFF", "#FFB6C1", "#8B0000", "#4682B4") # Custom colors
+
+layout(matrix(c(1, 2), nrow = 1), widths = c(2, 1)) # Layout with two columns: 2/3 for the pie chart, 1/3 for the legend
+
+# Draw the pie chart in the first column
+par(mar = c(1, 1, 4, 1)) # Adjust margins for the pie chart
+pie(
+  pie_data$total_capitalization,
+  labels = pie_data$label, # Add percentages as labels
+  col = custom_colors[1:nrow(pie_data)],
+  main = "Sectoral Distribution of CAC 40 Companies"
+)
+
+# Add the legend in the second column
+par(mar = c(1, 1, 4, 1)) # Adjust margins for the legend
+plot.new() 
+legend(
+  "center", # Center the legend in the column
+  legend = pie_data$sector, # Sector names
+  fill = custom_colors[1:nrow(pie_data)], # Corresponding colors
+  title = "Sectors",
+  bty = "n", # Remove legend box
+  cex = 0.9, 
+  pt.cex = 1.5, 
+  text.width = 0.5 
+)
+```
+
+The chart above illustrates the sectoral distribution of the CAC 40, showing a significant predominance of the consumer sector (39.6%) and financial services (22.3%). This structure reflects the central role of these sectors in the French economy, both nationally and internationally. In contrast, the technology sector, while strategic, represents a modest 4.8%, highlighting its still limited weight compared to other international indices, such as the Nasdaq, which includes major companies like Google, Apple, Microsoft, and Meta.
+
+```{r sector_dividend_allocation, echo=FALSE}
+# Calculate sector dividend allocation
+sector_dividend_allocation <- cac40_composition %>%
+  filter(!is.na(sector)) %>%
+  group_by(sector) %>%
+  summarise(
+    total_dividend = sum(as.numeric(dividend_2023_in_millions), na.rm = TRUE)  # Sum of dividends for each sector
+  ) %>%
+  mutate(
+    percentage = total_dividend / sum(total_dividend) * 100  # Calculate the proportion of dividends
+  ) %>%
+  select(sector, percentage)  # Select the sector and proportion columns
+
+```
+
+```{r, echo=FALSE}
+colors <- c("#00838F", "#00BCD4", "#80DEEA", "#FFB74D", "#FF7043", "#4CAF50", "#607D8B", "#F44336", "#E91E63", "#9C27B0")
+
+donut <- ggplot(data = sector_dividend_allocation, aes(x = 2, y = percentage, fill = sector)) +
+  geom_col(color = "black") +
+  coord_polar("y", start = 1) +
+  geom_text(aes(label = paste0(round(percentage, 1), "%")),  # Directly use `percentage` without multiplying by 100
+            position = position_stack(vjust = 0.5)) +
+  theme(panel.background = element_blank(),
+        axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_text(hjust = 0.5, size = 18)) +
+  ggtitle("Sectoral Distribution of Dividends (CAC 40)") +
+  scale_fill_manual(values = colors) +
+  xlim(0.5, 2.5)
+
+# Display the chart
+donut
+
+
+```
+
+Regarding profit redistribution, the donut chart highlights the significant contribution of the financial sector (29.8%) and the consumer sector (18%) to dividends paid to shareholders. This contribution contrasts with their relative weight in the index, underscoring their predominant role in creating value for investors. Conversely, the technology and utilities sectors are characterized by more modest contributions, suggesting a strategic focus on reinvestment.
+
+The joint analysis of sectoral composition and dividend distribution sheds light on the performance drivers of the CAC 40. It also reveals the differentiated strategic choices of companies by sector—between maximizing shareholder value and prioritizing long-term development.
+
+## Importance of Companies in the Index
+The companies that make up the CAC 40 show highly heterogeneous weights, resulting in varied contributions to the weekly fluctuations of the index. A detailed analysis of relative contributions shows that certain companies, particularly large-cap firms such as LVMH or TotalEnergies, exert a disproportionately strong influence on the overall performance of the index.
+
+A mosaic chart representing the contribution of companies highlights this dynamic. This visualization clearly shows that the 5 to 10 most influential companies are often responsible for a significant portion of the variations observed in the CAC 40.
+
+```{r company_contribution, echo=FALSE}
+# Calculate the percentage change for each company last week
+cac40_composition <- cac40_composition %>%
+  mutate(
+    percent_change = ((stock_price_30dec - stock_price_5jan) / stock_price_5jan) * 100
+  )
+
+# Calculate the relative contribution of each company to the total change
+cac40_composition <- cac40_composition %>%
+  mutate(relative_contribution = abs(percent_change) / sum(abs(percent_change)) * 100)
+
+# Prepare data for the waffle chart
+waffle_data <- round(cac40_composition$relative_contribution)
+names(waffle_data) <- cac40_composition$company_name
+
+# Generate a dynamic color palette with `colorRampPalette`
+palette_colors <- colorRampPalette(brewer.pal(8, "Set3"))(length(waffle_data))
+
+# Create the waffle chart with custom colors
+waffle::waffle(
+  waffle_data,
+  rows = 10,
+  title = "Contribution of CAC 40 Companies to Weekly Variation",
+  colors = palette_colors
+)
+```
+
+To complement this analysis, a bar chart allows for a more precise quantification of individual contributions. This representation provides a useful tool for identifying companies whose impact, while less visible at first glance, remains significant in weekly fluctuations.
+
+```{r bar_chart_contributions, echo=FALSE}
+ggplot(cac40_composition, aes(x = reorder(company_name, -relative_contribution), y = relative_contribution)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  labs(
+    title = "Contribution of CAC 40 Companies to Weekly Variations",
+    x = "Company",
+    y = "Relative Contribution (%)"
+  ) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+## Regional Contributions and Sectoral Variations
+The performance of CAC 40 companies cannot be isolated from the economic dynamics of the regions in which they operate. A geographic analysis of regional contributions in 2023 highlights the dominant influence of European and North American markets. The United States, in particular, benefits from strategic trade agreements that facilitate market access for many groups, strengthening its contribution to the index's overall revenues. Moreover, Asian regions play a significant role, especially in the luxury sector, where they remain a key driver of growth for groups like LVMH and Hermès. This importance is also reflected in the international activities of large companies such as L’Oréal and Airbus. These economic zones capture a substantial share of the revenues generated by the index's companies, illustrating the fundamental role of global dynamics in their results.
+
+
+```{r, echo=FALSE}
+# Prepare detailed contribution data (found in Les Echos article)
+cac40_contributions <- data.frame(
+  region = c("Europe", "North America", "South America", 
+             "Asia-Oceania-Africa", "Other Regions"),
+  contribution = c(52, 20.45, 5.55, 14, 8)
+)
+
+# Load a world map and associate countries with detailed geographic regions
+world <- ne_countries(scale = "medium", returnclass = "sf")
+world <- world %>%
+  mutate(region_group = case_when(
+    continent == "Europe" ~ "Europe",
+    continent == "North America" ~ "North America",
+    continent == "South America" ~ "South America",
+    continent %in% c("Asia", "Oceania", "Africa") ~ "Asia-Oceania-Africa",
+    TRUE ~ "Other Regions"
+  ))
+
+# Join contributions with geographic data
+world <- world %>%
+  left_join(cac40_contributions, by = c("region_group" = "region"))
+
+# Create the choropleth map
+choropleth <- ggplot(data = world) +
+  geom_sf(aes(fill = contribution), color = "black", size = 0.1) +
+  scale_fill_viridis_c(option = "viridis", name = "Contribution (%)") +
+  labs(
+    title = "Regional Contributions to the Overall Performance of CAC 40 in 2023",
+    subtitle = "Data in percentage of total revenue",
+    caption = "Source: 2023 CAC 40 Annual Report"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 16, face = "bold"),
+    plot.subtitle = element_text(size = 12),
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 10)
+  )
+
+# Display the map
+print(choropleth)
+
+
+```
+
+To further refine the analysis, a Ridgeline plot of weekly variations by sector offers an overview of the specific distributions for each industry. For instance, the technology sector stands out for its increased volatility, while the consumer and financial services sectors show distributions more concentrated around their mean. These characteristics may reflect differentiated investment behaviors or varying sector sensitivities to economic shocks.
+
+```{r ridgeline_plot, echo=FALSE}
+ggplot(cac40_composition, aes(x = percent_change, y = sector, fill = sector)) +
+  geom_density_ridges() +
+  labs(
+    title = "Distribution of Weekly Variations by Sector",
+    x = "Weekly Variation (%)",
+    y = "Sector"
+  ) +
+  theme_ridges() +
+  theme(legend.position = "none")
+
+```
+
+These combined visual representations reveal the complexity of interactions between companies, sectors, and regions in the overall performance of the CAC 40. They provide key insights for identifying performance drivers and strategic opportunities for investors.
+
+
+# Variations and Performance of the CAC 40
+## Analysis of Time-Based Variations
+
+Stock market indices, especially the CAC 40, react strongly to major economic events that significantly influence their returns. A comparative analysis of returns before and after these events highlights characteristic variations depending on the type of crisis. For example, the global financial crisis caused significant losses followed by a gradual recovery.
+
+```{r, echo=FALSE}
+# Define economic events and their dates
+events <- data.frame(
+  Event = c(
+    "Burst of the Internet Bubble",
+    "Global Financial Crisis",
+    "European Sovereign Debt Crisis",
+    "Brexit",
+    "COVID-19 Pandemic"
+  ),
+  Date = as.Date(c(
+    "2002-03-01",
+    "2008-09-15",
+    "2012-06-30",
+    "2016-06-24",
+    "2020-03-11"
+  )),
+  Period = c("2000-2002", "2007-2008", "2010-2012", "2016", "2020")
+)
+
+# Calculate simple returns before and after each event (1-year period)
+returns <- events %>%
+  rowwise() %>%
+  mutate(
+    Before = {
+      start_date <- Date - 365  # 1 year before
+      end_date <- Date
+      start_price <- daily_data %>% filter(Date >= start_date & Date <= end_date) %>% slice(1) %>% pull(cac40_price)
+      end_price <- daily_data %>% filter(Date >= start_date & Date <= end_date) %>% slice(n()) %>% pull(cac40_price)
+      (end_price - start_price) / start_price
+    },
+    After = {
+      start_date <- Date
+      end_date <- Date + 365  # 1 year after
+      start_price <- daily_data %>% filter(Date >= start_date & Date <= end_date) %>% slice(1) %>% pull(cac40_price)
+      end_price <- daily_data %>% filter(Date >= start_date & Date <= end_date) %>% slice(n()) %>% pull(cac40_price)
+      (end_price - start_price) / start_price
+    }
+  )
+
+# Convert to percentage
+returns <- returns %>%
+  mutate(
+    Before = Before * 100,
+    After = After * 100
+  )
+
+# Create the plot
+ggplot(returns, aes(x = Event)) +
+  geom_point(aes(y = Before, color = "Before"), size = 4) +
+  geom_point(aes(y = After, color = "After"), size = 4) +
+  geom_segment(aes(xend = Event, y = Before, yend = After), linetype = "dashed", color = "grey") +
+  scale_color_manual(values = c("Before" = "firebrick", "After" = "forestgreen")) +
+  labs(
+    title = "Comparison of Returns Before and After Events (1 Year)",
+    x = "Economic Event",
+    y = "Return (%)",
+    color = "Period"
+  ) +
+  coord_flip() +
+  theme_minimal()
+
+```
+
+The study of daily return distributions provides valuable insights into the underlying dynamics of these variations. The histogram of daily returns for 2023 illustrates a symmetric distribution centered around zero, indicating overall stability. However, the presence of fat tails in this distribution highlights an increased frequency of extreme returns, often caused by exogenous shocks.
+
+```{r daily_returns_histogram, fig.width=12, fig.height=6, echo=FALSE}
+# Calculate daily returns
+daily_data <- daily_data %>%
+  arrange(Date) %>%
+  mutate(cac40_Daily_Return = (cac40_price - lag(cac40_price)) / lag(cac40_price) * 100)  # In %
+
+# Filter valid returns
+filtered_daily_data <- daily_data %>%
+  filter(!is.na(cac40_Daily_Return))
+
+# Create the histogram
+ggplot(filtered_daily_data, aes(x = cac40_Daily_Return)) +
+  geom_histogram(binwidth = 0.5, fill = "steelblue", color = "black", alpha = 0.7) +
+  labs(
+    title = "Distribution of CAC 40 Daily Returns",
+    x = "Daily Return (%)",
+    y = "Frequency"
+  ) +
+  xlim(-7, 7) +
+  theme_minimal()
+
+```
+
+The assumption of normality, verified using a QQ-plot, reveals that although CAC 40 returns generally follow a normal trend, significant deviations appear in the tails. These deviations underscore the index's sensitivity to extreme events, a characteristic of a slightly leptokurtic distribution. This observation is crucial for financial risk management and return modeling, where accounting for rare but impactful events is essential.
+
+
+```{r qq_plot, echo=FALSE}
+# Create the QQ-plot
+ggplot(filtered_daily_data, aes(sample = cac40_Daily_Return)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  labs(
+    title = "QQ-plot of CAC 40 Daily Returns",
+    x = "Theoretical Quantiles",
+    y = "Observed Return Quantiles"
+  ) +
+  theme_minimal()
+
+rm(filtered_daily_data)
+
+
+```
+
+These analyses demonstrate the importance of integrating robust and tailored methodologies to understand the specific characteristics of volatility and observed distributions in financial markets.
+
+## Study of Daily and Weekly Returns
+The analysis of daily returns in 2023 highlights a complex dynamic, marked by significant fluctuations at times. A graphical representation in the form of a heatmap of daily variations clearly illustrates this volatility: periods of sharp decline (marked in red) are mainly concentrated in the first quarter, often linked to global macroeconomic uncertainties. In contrast, positive peaks (in green) indicate rebound periods, generally associated with favorable announcements or market adjustments.
+
+```{r daily_variation_heatmap, fig.width=12, fig.height=6, echo=FALSE}
+# Set up the page for two side-by-side plots
+par(mfrow = c(1, 2))
+
+# Add columns for year, month, and day
+daily_data$Year <- year(daily_data$Date)
+daily_data$Month <- month(daily_data$Date, label = TRUE, abbr = TRUE)
+daily_data$Day <- day(daily_data$Date)
+
+# Filter for a specific year
+data_2023 <- daily_data %>% filter(Year == 2023)
+
+# Heatmap of daily variations
+ggplot(data_2023, aes(x = Month, y = Day, fill = cac40_Daily_Return)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient2(
+    low = "red", high = "green", mid = "white", midpoint = 0,
+    name = "Variation (%)"
+  ) +
+  labs(
+    title = "CAC 40 Daily Variations (2023)",
+    x = "Month", y = "Day"
+  ) +
+  theme_minimal()
+
+```
+
+To deepen the analysis, a monthly boxplot of daily returns reveals significant dispersion in the first half of the year, with fat tails in the histogram indicating high volatility. In contrast, the second half is characterized by a gradual stabilization, with returns whose medians converge toward zero, reflecting a certain calm.
+
+```{r, echo=FALSE}
+# Boxplot
+ggplot(data_2023, aes(x = Month, y = cac40_Daily_Return)) +
+  geom_boxplot(fill = "skyblue", alpha = 0.7) +
+  labs(
+    title = "Distribution of Daily Returns in 2023",
+    x = "Month",
+    y = "Daily Return (%)"
+  ) +
+  theme_minimal()
+
+rm(data_2023)
+```
+
+
+
+These observations highlight a generally symmetric behavior of returns, but punctuated by extreme values, requiring increased vigilance from investors. The distribution of returns, while approaching a normal curve, remains influenced by exogenous shocks, emphasizing the importance of integrating these rare events into financial models.
+
+## Volatility and Returns Around Specific Events
+Major exogenous events, such as Brexit or the 2008 financial crisis, induce significant disruptions in the returns and volatility of the CAC 40 index. Analyzing these periods helps decipher how financial markets respond to uncertainty and reveals the underlying dynamics. 
+
+The evolution of average daily returns around Brexit clearly illustrates the impact of this event on the markets. Before the official announcement (blue dashed line), returns were characterized by relative stability, with moderate variations. However, the Brexit announcement triggered a sharp drop followed by a rapid rebound. This behavior reflects heightened short-term volatility, typical of periods of major political uncertainty. This phenomenon, amplified by portfolio adjustments in response to unexpected scenarios, underscores the importance of economic agents' anticipations.
+
+
+```{r brexit_average_returns, echo=FALSE}
+
+# Step 1: Add ".PA" suffix to each ticker symbol for CAC 40 stocks and extract company names
+symbols_cac40 <- paste0(cac40_composition$Ticker, ".PA")
+names_cac40 <- cac40_composition$company_name
+
+# Step 2: Define the date range for downloading data
+start_date <- "2000-01-01"
+end_date <- "2024-12-30"
+
+# Step 3: Download daily open prices for each stock from Yahoo Finance
+open_prices <- list()
+
+for (i in seq_along(symbols_cac40)) {
+  ticker <- symbols_cac40[i]
+  company_name <- names_cac40[i]
+  
+  tryCatch({
+    data <- getSymbols(
+      ticker,
+      src = "yahoo",
+      from = start_date,
+      to = end_date,
+      auto.assign = FALSE
+    )
+    
+    open_prices[[company_name]] <- Op(data)  # Extract open prices
+  }, error = function(e) {
+    message(paste("Error for ticker:", ticker))
+  })
+}
+
+# Step 4: Merge all open prices into a single data frame
+open_prices_df <- do.call(merge, open_prices)
+write.zoo(open_prices_df, file = "cac40_open_prices_daily_2000_2024.csv", sep = ",")
+
+# Reload the saved data if necessary
+open_prices_df <- read.zoo("cac40_open_prices_daily_2000_2024.csv", sep = ",", header = TRUE, stringsAsFactors = FALSE)
+open_prices_df <- as.data.frame(open_prices_df)
+open_prices_df$Date <- as.Date(rownames(open_prices_df))
+
+# Step 5: Align "URW.PA.Open" with corresponding "urw_price" values
+urw_data <- daily_data %>%
+  select(Date, urw_price)
+urw_data$Date <- as.Date(urw_data$Date)
+
+merged_data <- merge(open_prices_df, urw_data[, c("Date", "urw_price")], by = "Date", all.x = TRUE)
+merged_data$URW.PA.Open <- ifelse(!is.na(merged_data$urw_price), merged_data$urw_price, merged_data$URW.PA.Open)
+merged_data$urw_price <- NULL
+open_prices_df <- merged_data
+
+# Step 6: Calculate the percentage of missing values for each stock
+missing_summary <- open_prices_df %>%
+  summarise(across(-Date, ~ mean(is.na(.)) * 100, .names = "Missing_{col}")) %>%
+  pivot_longer(cols = starts_with("Missing_"), names_to = "Stock", values_to = "Missing_Percentage")
+
+selected_columns <- missing_summary %>%
+  filter(Missing_Percentage <= 20) %>%
+  mutate(Stock = gsub("Missing_", "", Stock)) %>%
+  pull(Stock)
+
+# Step 7: Calculate daily returns for selected columns
+cleaned_data <- open_prices_df %>%
+  filter(rowSums(is.na(select(., all_of(selected_columns)))) < length(selected_columns)) %>%
+  mutate(across(all_of(selected_columns), ~ c(NA, diff(.)) / lag(.) * 100, .names = "Return_{col}"))
+
+# Step 8: Calculate average returns around the Brexit event
+average_returns <- cleaned_data %>%
+  rowwise() %>%
+  mutate(Average_Return = mean(c_across(starts_with("Return_")), na.rm = TRUE)) %>%
+  ungroup()
+
+event_date <- as.Date("2016-06-24")
+window_data <- average_returns %>%
+  filter(Date >= event_date - 30 & Date <= event_date + 30)
+
+# Step 9: Plot the average daily returns around Brexit
+ggplot(window_data, aes(x = Date, y = Average_Return)) +
+  geom_line(color = "red", size = 1) +
+  geom_vline(xintercept = as.numeric(event_date), linetype = "dashed", color = "blue") +
+  labs(
+    title = "Average Daily Returns Around Brexit",
+    x = "Date",
+    y = "Average Return (%)"
+  ) +
+  theme_minimal()
+
+
+```
+
+Regarding the long-term evolution of volatility, the boxplot of monthly volatilities of CAC 40 returns highlights major peaks during global crises, particularly in 2008 (global financial crisis) and 2020 (COVID-19 pandemic). These periods of extreme turbulence resulted in amplified return variations, direct reflections of economic uncertainty and massive portfolio adjustments by investors. Conversely, the years following these crises show a gradual stabilization trend in volatility levels, indicating a progressive return to market normality.
+
+```{r monthly_volatility_boxplot, echo=FALSE}
+# Add month and year columns
+daily_data <- daily_data %>%
+  mutate(Month = format(Date, "%Y-%m"), Year = format(Date, "%Y"))
+
+# Calculate monthly return volatility (standard deviation)
+volatility_data <- daily_data %>%
+  group_by(Month, Year) %>%
+  summarise(Volatility = sd(cac40_Daily_Return, na.rm = TRUE)) %>%
+  ungroup() %>%
+  drop_na()
+
+# Create a boxplot of monthly volatilities by year
+ggplot(volatility_data, aes(x = Year, y = Volatility)) +
+  geom_boxplot(fill = "steelblue", alpha = 0.7) +
+  labs(
+    title = "Boxplot of Monthly Volatility of CAC 40 Returns",
+    x = "Year",
+    y = "Volatility (%)"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+rm(volatility_data)
+
+```
+
+These analyses reveal that, although generally stable, financial markets remain vulnerable to unforeseen exogenous shocks. Integrating these risks into investment strategies is essential, requiring a rigorous assessment of the intensity and duration of each event. These elements are fundamental prerequisites for developing robust models capable of capturing future fluctuations and mitigating the effects of volatility.
+
+
+# Relationships with Other Economic Variables
+## Macroeconomic Factors
+The analysis of the relationship between CAC 40 index returns and 3-month Euribor rates reveals a slightly negative correlation (-0.13), highlighted by the downward slope of the regression line. This result contradicts the expected positive correlation during periods of economic recovery, where rising Euribor rates reflect strengthening economic activity. Here, the weak negative correlation suggests that the impact of Euribor rates on CAC 40 returns is marginal in a broader context.
+
+
+
+```{r, echo=FALSE}
+# Filter data between 2002 and 2024
+daily_data <- daily_data %>% filter(Date >= as.Date("2002-01-01") & Date < as.Date("2024-01-01"))
+euribor_3m_rate <- euribor_3m_rate %>% filter(Date >= as.Date("2002-01-01") & Date < as.Date("2024-01-01"))
+
+# Calculate monthly returns for the CAC 40
+cac40_monthly <- daily_data %>%
+  mutate(YearMonth = format(Date, "%Y-%m")) %>%
+  group_by(YearMonth) %>%
+  summarise(
+    Price_Start = first(cac40_price),
+    Price_End = last(cac40_price)
+  ) %>%
+  mutate(Return_Monthly = (Price_End - Price_Start) / Price_Start * 100)
+
+# Merge with Euribor rates
+merged_data <- inner_join(
+  cac40_monthly %>% mutate(YearMonth = as.Date(paste0(YearMonth, "-01"))),
+  euribor_3m_rate,
+  by = c("YearMonth" = "Date")
+)
+
+# Remove extreme returns
+merged_data <- merged_data %>%
+  filter(Return_Monthly > -50 & Return_Monthly < 50)
+
+# Calculate the correlation coefficient
+correlation <- cor(merged_data$Return_Monthly, merged_data$EURIBOR_3M_Rate)
+print(paste("Correlation coefficient:", round(correlation, 2)))
+
+# Linear regression
+regression_model <- lm(Return_Monthly ~ EURIBOR_3M_Rate, data = merged_data)
+
+# Divide data into economic periods
+merged_data <- merged_data %>%
+  mutate(
+    Period = case_when(
+      YearMonth < as.Date("2008-01-01") ~ "Pre-Crisis",
+      YearMonth >= as.Date("2008-01-01") & YearMonth < as.Date("2012-01-01") ~ "Crisis",
+      YearMonth >= as.Date("2012-01-01") ~ "Post-Crisis"
+    )
+  )
+
+# Create scatter plot with regression line
+scatter_plot <- ggplot(merged_data, aes(x = EURIBOR_3M_Rate, y = Return_Monthly)) +
+  geom_point(color = "blue") +
+  geom_smooth(method = "lm", se = FALSE, color = "red") +
+  labs(
+    title = "Relationship Between CAC 40 Monthly Returns and 3-Month Euribor Rates",
+    x = "3-Month Euribor Rate (%)",
+    y = "CAC 40 Monthly Returns (%)"
+  ) +
+  theme_minimal()
+
+print(scatter_plot)
+
+```
+
+
+However, segmenting the analysis by economic cycles reveals important nuances. During crises, such as the 2008 recession or the European sovereign debt crisis (2011-2012), the influence of Euribor rates on returns becomes more pronounced. This can be explained by accommodative monetary policies during crises that lower Euribor rates, supporting liquidity and boosting investor confidence. In contrast, during post-crisis phases, the relationship becomes less distinct, as investors focus more on economic fundamentals and corporate performance.
+
+```{r scatter_plot_period, echo=FALSE}
+scatter_plot_period <- ggplot(merged_data, aes(x = EURIBOR_3M_Rate, y = Return_Monthly, color = Period)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(
+    title = "Relationship Between CAC 40 Monthly Returns and 3-Month Euribor Rates (by Periods)",
+    x = "3-Month Euribor Rate (%)",
+    y = "CAC 40 Monthly Returns (%)",
+    color = "Period"
+  ) +
+  theme_minimal()
+
+print(scatter_plot_period)
+
+```
+
+
+These results highlight the complexity of interactions between monetary policies and financial markets. They also emphasize the importance of considering the economic context and market cycles to understand how interest rates impact stock indices. This approach helps refine investment strategies and anticipate the future evolution of the CAC 40 in various economic environments.
+
+
+## Relationship with Currencies
+The relationship between the EUR/USD exchange rate and CAC 40 index variations shows a negative correlation of -0.24, indicating that an appreciation of the euro against the U.S. dollar tends to be associated with a decline in the French stock index. This phenomenon is based on fundamental economic mechanisms affecting companies in the CAC 40.
+
+On one hand, a rising euro reduces the competitiveness of French exports, especially in markets where the dollar is the reference currency, such as North America. Large exporting companies like Airbus and LVMH see their products become more expensive for local consumers, potentially reducing their market share. On the other hand, a strong euro also decreases profits earned in dollars when converted to euros, affecting multinationals that generate a significant portion of their revenues internationally.
+
+During the 2008 financial crisis, for example, the euro reached 1.6 USD/EUR, coinciding with a sharp decline in the CAC 40 index, exacerbated by a contraction in global demand. Conversely, during the European sovereign debt crisis (2011-2012), a depreciation of the euro boosted French exports, strengthening the performance of CAC 40 companies.
+
+However, the graphical analysis also reveals significant dispersion in the data points, reflecting the influence of other factors such as macroeconomic conditions, monetary policies, or sector-specific dynamics. Thus, while the exchange rate is a crucial factor, it must be considered within a more complex framework where multiple dynamics affect corporate and stock index performance.
+
+
+
+
+```{r taux_chomage_process, echo=FALSE}
+# Function to interpolate annual data into monthly data
+process_taux_chomage <- function(data) {
+  # Transform years into full dates (January 1st for each year)
+  data <- data %>%
+    mutate(Date = as.Date(paste0(Date, "-01-01"), format = "%Y-%m-%d"))
+
+  # Generate all monthly dates between the minimum and maximum dates
+  date_sequence <- seq(from = min(data$Date), 
+                       to = max(data$Date), 
+                       by = "month")
+
+  # Extend the data to include all monthly dates
+  data_extended <- data.frame(Date = date_sequence)
+
+  # Apply linear interpolation for the unemployment rate
+  data_interpolated <- data_extended %>%
+    left_join(data, by = "Date") %>%
+    arrange(Date) %>%
+    mutate(unemployment_rate = approx(
+      x = Date[!is.na(unemployment_rate)], 
+      y = unemployment_rate[!is.na(unemployment_rate)], 
+      xout = Date, 
+      rule = 2)$y)
+
+  # Keep only the first day of each month
+  data_first_day <- data_interpolated %>%
+    filter(day(Date) == 1)
+
+  return(data_first_day)
+}
+
+# Application
+taux_chomage_first_day <- process_taux_chomage(france_unemployment_rate)
+
+```
+
+```{r generic_process, echo=FALSE}
+
+data_month <- daily_data
+
+# Generic function to process data
+process_data <- function(data, value_column) {
+  # Generate all missing dates (including non-working days)
+  date_sequence <- seq(from = min(data$Date, na.rm = TRUE), 
+                       to = max(data$Date, na.rm = TRUE), 
+                       by = "day")
+
+  # Extend the table with the new dates
+  data_extended <- data.frame(Date = date_sequence) %>%
+    left_join(data, by = "Date") %>%
+    arrange(Date)
+
+  # Interpolate missing values
+  data_interpolated <- data_extended %>%
+    mutate(!!value_column := approx(
+      x = Date[!is.na(.data[[value_column]])], 
+      y = .data[[value_column]][!is.na(.data[[value_column]])], 
+      xout = Date, 
+      rule = 2)$y)
+
+  # Filter to keep only the first day of each month
+  data_first_day <- data_interpolated %>%
+    filter(day(Date) == 1)
+
+  return(data_first_day)
+}
+
+# Apply the function to our datasets
+data_month <- process_data(
+  data = data_month,
+  value_column = "euro_usd"
+)
+
+data_month <- process_data(
+  data = data_month,
+  value_column = "cac40_price"
+)
+
+data_month <- process_data(
+  data = data_month,
+  value_column = "sp500_price"
+)
+
+```
+
+
+```{r merge_and_prepare_data, echo=FALSE}
+# Import and prepare Euribor rate data
+taux_euribor_data <- euribor_3m_rate
+
+
+# Function to merge multiple data frames based on the first and last common dates
+merge_tables <- function(..., date_column = "Date") {
+  tables <- list(...)
+  
+  # Find the common date range
+  date_min <- max(sapply(tables, function(df) min(df[[date_column]], na.rm = TRUE)))
+  date_max <- min(sapply(tables, function(df) max(df[[date_column]], na.rm = TRUE)))
+  
+  # Filter each table to keep only the selected date range
+  filtered_tables <- lapply(tables, function(df) {
+    df %>% filter(.data[[date_column]] >= date_min, .data[[date_column]] <= date_max)
+  })
+  
+  # Merge all tables on the "Date" column
+  final_table <- Reduce(function(x, y) full_join(x, y, by = date_column), filtered_tables)
+  
+  return(final_table)
+}
+
+# Apply the function to merge datasets
+merged_table <- merge_tables(
+  data_month, 
+  taux_chomage_first_day, 
+  taux_euribor_data
+)
+
+merged_table <- merged_table %>%
+  select(-c(urw_price, Month, Day, Year, cac40_Daily_Return))
+
+```
+
+```{r correlation_plot, echo=FALSE}
+# Calculate the correlation coefficient between EUR/USD and CAC 40
+correlation <- cor(merged_table$euro_usd, merged_table$cac40_price, use = "complete.obs")
+
+# Create the scatter plot
+ggplot(merged_table, aes(x = euro_usd, y = cac40_price)) +
+  geom_point(color = "blue", alpha = 0.7, size = 2) +  # Points adjusted for better readability
+  geom_smooth(method = "lm", color = "red", fill = "pink", alpha = 0.3, se = TRUE, linetype = "dashed") +
+  labs(
+    title = "Relationship Between EUR/USD Exchange Rate and CAC 40 Index",
+    subtitle = "Correlation Analysis Between Exchange Rate and French Stock Index",
+    x = "EUR/USD Exchange Rate (USD per EUR)",
+    y = "CAC 40 Index (Points)",
+    caption = "Source: Merged Data"
+  ) +
+  annotate(
+    "text", 
+    x = 1.5, y = 7000, 
+    label = paste("Correlation:", round(correlation, 2)), 
+    color = "darkred", 
+    size = 5, 
+    hjust = 0  # Correction ici, il manquait la fermeture de l'argument
+  ) +
+  theme_minimal(base_size = 14) + 
+  theme(
+    plot.title = element_text(face = "bold", size = 18, hjust = 0.5),
+    plot.subtitle = element_text(size = 14, hjust = 0.5),
+    plot.caption = element_text(size = 10, face = "italic", hjust = 1),
+    axis.title.x = element_text(face = "bold"),
+    axis.title.y = element_text(face = "bold"),
+    panel.grid.major = element_line(color = "gray", linetype = "dotted"),
+    panel.grid.minor = element_blank()
+  ) +
+  scale_x_continuous(breaks = seq(1, 1.6, by = 0.1)) + 
+  scale_y_continuous(labels = scales::comma)
+
+
+```
+
+## Correlation Matrix
+
+```{r cac40_sp500_plot, echo=FALSE}
+ggplot(merged_table, aes(x = Date)) +
+  geom_line(aes(y = cac40_price, color = "CAC40")) +
+  geom_line(aes(y = sp500_price, color = "S&P 500")) +
+  labs(
+    title = "Evolution of CAC 40 and S&P 500 Prices",
+    y = "Price",
+    color = "Index"
+  ) +
+  theme_minimal()
+
+```
+The correlation matrix is an essential analytical tool, providing a synthetic view of linear relationships between key economic and financial variables influencing the evolution of the CAC 40 index. The analysis reveals several significant trends, notably a strong positive correlation with the S&P 500 index. This connection reflects the interconnectedness of global stock markets, particularly during periods of crises or global economic recoveries, such as the 2008 financial crisis or the 2020 pandemic. These events illustrate how major indices synchronize in response to macroeconomic shocks.
+
+```{r, echo=FALSE}
+# Visualization of correlations
+# Select numeric columns only
+numeric_columns <- merged_table %>%
+  select(-Date) %>%  # Exclude non-numeric columns
+  select_if(is.numeric)
+
+# Calculate the correlation matrix
+correlation_matrix <- cor(numeric_columns, use = "complete.obs")
+
+# Visualize the correlation matrix (optional)
+corrplot::corrplot(
+  correlation_matrix, 
+  method = "color", 
+  type = "upper", 
+  tl.col = "black", 
+  tl.srt = 45
+)
+
+```
+
+
+In contrast, the negative correlation observed between the CAC 40 and the EUR/USD exchange rate reflects an inverse dynamic. An appreciation of the euro, as an unfavorable factor for French exporting companies, tends to weigh on the index’s performance. This phenomenon can be explained by reduced price competitiveness for French companies in international markets, directly affecting their profit margins.
+
+Furthermore, a moderate correlation between 3-month Euribor rates and the CAC 40 highlights the indirect influence of interest rate variations on investor expectations. The European Central Bank's (ECB) monetary policies play a central role here: for example, the rate cuts in 2012, aimed at supporting the recovery after the sovereign debt crisis, helped boost European stock markets.
+
+Finally, a significant negative correlation is identified between the CAC 40 and the unemployment rate. High unemployment, an indicator of unfavorable economic conditions, is often associated with weaker stock performance, reflecting stagnant domestic demand, declining corporate profits, and eroded investor confidence. This link was particularly evident during the economic tensions in the eurozone.
+
+These correlations illustrate the complexity of interactions between economic and financial variables. They reinforce the importance for investors to take these relationships into account in their analyses to anticipate index movements in various economic contexts.
+
+---
+
+# Sector Composition and Characteristics of the CAC 40
+
+## Introduction to the Methodology
+
+This analysis aims to predict CAC 40 index variations using a simple linear regression model based on key macroeconomic variables, namely:
+
+  * The EUR/USD exchange rate  
+  * Variations in the S&P 500 index  
+  * The unemployment rate  
+  * The 3-month Euribor rate  
+
+These explanatory variables were chosen for their economic relevance and proven correlation with CAC 40 fluctuations, as demonstrated by previous financial market research. The main objective is to quantify the influence of these factors on CAC 40 prices and evaluate the feasibility of generating reliable predictions to anticipate future trends.
+
+## Data Presentation and Preprocessing
+
+To ensure the quality of the data used in this analysis, a rigorous preprocessing process was conducted:
+
+**1) Handling Missing Values:** An initial inspection confirmed the absence of significant missing values, ensuring the robustness of the results.  
+  
+**2) Selection of Numerical Variables:** Only relevant quantitative variables were retained for the analysis, as illustrated in Figure 1, which displays the distribution of the variables.
+
+
+```{r histogram_numeric_variables, echo=FALSE}
+# Load the data
+data <- merged_table
+
+# Check for missing values
+#data %>% summarise_all(~ sum(is.na(.)))
+
+# Histograms of numerical variables
+data %>% 
+  select(-Date) %>%  # Exclude Date columns
+  pivot_longer(cols = everything(), names_to = "Variable", values_to = "Value") %>%
+  ggplot(aes(x = Value)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "black", alpha = 0.7) +
+  facet_wrap(~Variable, scales = "free") +
+  theme_minimal() +
+  labs(
+    title = "Distribution of Variables",
+    x = "Value",
+    y = "Frequency"
+  )
+
+```
+
+
+
+The graphs highlight several characteristics of the explanatory variables and the target variable (`CAC40_Price`):
+
+  * A multi-modal distribution for the CAC40 and S&P 500, reflecting periods marked by crises or rapid economic recoveries.
+  
+  * A notable concentration of EUR/USD rates around 1.2, indicating relative stability over the studied period.
+  
+  * Significant heterogeneity in 3-month Euribor rates, illustrating the impact of monetary policies over time.
+
+These preliminary observations justify the integration of these macroeconomic variables as the foundation for the predictive model of the CAC 40.
+
+## Correlation Analysis
+
+Before constructing the linear regression model, a correlation matrix was calculated to explore the relationships between the explanatory variables and the CAC 40. The results highlight several significant relationships:
+  
+  * A strong positive correlation with the S&P 500 index, confirming the interdependence of global financial markets.
+  
+  * A moderate correlation with the EUR/USD rate, reflecting the impact of currency fluctuations on the companies within the index.
+  
+  * A negative correlation with the 3-month Euribor rate, indicating an inverse influence of credit conditions on stock performance.
+  
+  * A weak correlation with the unemployment rate, suggesting that this indicator has a limited short-term impact on index variations.
+
+These results confirm the relevance of the selected explanatory variables for modeling while also highlighting potential limitations related to variables with weak correlations to the CAC 40.
+
+## Construction of the Linear Regression Model
+
+To analyze variations in the CAC 40 index, we specified a linear regression model based on the following formula:
+
+\[
+CAC40\_Price \sim EUR\_USD\_Price + SP500\_Price + taux\_chomage + EURIBOR\_3M\_Rate
+\]
+
+This choice is based on the economic relevance of the selected explanatory variables:
+
+- **EUR/USD:** An indicator of the price competitiveness of French exporting companies and the impact of exchange rate fluctuations on their financial results.
+- **S&P 500:** A reference for international financial markets, reflecting global trends.
+- **Unemployment rate:** An indirect measure of economic health and domestic consumption.
+- **3-month Euribor rate:** A proxy for credit and liquidity conditions in the European market.
+
+The estimated coefficients reveal several significant relationships:
+
+- **S&P 500:** A strongly positive correlation, indicating that the CAC 40 closely follows U.S. market trends.
+- **EUR/USD:** A moderately positive correlation, suggesting that an appreciation of the euro may sometimes be accompanied by increases in the CAC 40.
+- **3-month Euribor rate:** A negative correlation, consistent with the idea that higher credit costs hinder the growth of listed companies.
+- **Unemployment rate:** A weak influence, corroborating its initially low correlation with the index.
+
+While the model captures major linear relationships, it does not fully account for the complex dynamics characterizing the market.
+
+## Cross-Validation and Performance Evaluation
+
+### Cross-Validation
+
+To assess the robustness of the model, cross-validation was conducted. The data was split into two subsets:
+
+- **Training (80%):** Used to adjust the coefficients.
+- **Test (20%):** Used to evaluate predictions on independent data.
+
+#### Performance Metrics
+
+The model’s performance was evaluated using several metrics:
+
+```{r cross_validation, echo=FALSE}
+# Cross-Validation
+# Splitting the data into training and testing sets
+set.seed(123)
+data_split <- initial_split(data, prop = 0.8)
+train_data <- training(data_split)
+test_data <- testing(data_split)
+
+# Linear regression model with cross-validation
+lm_fit <- linear_reg() %>%
+  set_engine("lm") %>%
+  fit(cac40_price ~ euro_usd + sp500_price + unemployment_rate + EURIBOR_3M_Rate, 
+      data = train_data)
+
+# Predictions on the test set
+predictions <- lm_fit %>% predict(new_data = test_data)
+
+# Add predictions to the test_data
+test_data <- test_data %>%
+  mutate(.pred = predictions$.pred)
+
+# Calculate performance metrics
+library(yardstick)
+metrics <- test_data %>%
+  metrics(truth = cac40_price, estimate = .pred)
+
+# Display the metrics
+metrics
+
+```
+- **RMSE (Root Mean Square Error):** 488.08, reflecting the average quadratic error.  
+- **R² (Coefficient of Determination):** 0.771, explaining 77.1% of the variance in CAC 40 prices.  
+- **MAE (Mean Absolute Error):** 407.01, representing the mean absolute error.  
+
+These results indicate satisfactory performance, although the model still has room for improvement, particularly in reducing errors during periods of high volatility.
+
+### Comparison of Actual and Predicted Values
+```{r compare_actual_predicted, echo=FALSE}
+comparison_df <- test_data %>%
+  select(Date, cac40_price, .pred) %>%
+  rename(
+    Actual_Value = cac40_price,
+    Predicted_Value = .pred
+  ) %>%
+  pivot_longer(cols = c(Actual_Value, Predicted_Value), names_to = "Type", values_to = "Value")
+
+# Plot the comparative curves
+ggplot(comparison_df, aes(x = Date, y = Value, color = Type)) +
+  geom_line(size = 1) +
+  labs(
+    title = "Comparison of Actual and Predicted Values (Test Phase)",
+    x = "Date",
+    y = "CAC 40 Price",
+    color = "Value Type"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+    axis.title = element_text(size = 14),
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 10)
+  )
+
+```
+
+The graph comparing actual and predicted values illustrates the performance of the linear regression model for the CAC 40. The main observations are as follows:
+
+- **General Trends Well Captured:**  
+  The model effectively reproduces the major dynamics of the index, particularly during prolonged phases of growth or decline.  
+
+- **Localized Deviations:**  
+  Certain divergences appear during periods of high volatility, such as financial crises or peaks of uncertainty. For instance, abrupt fluctuations during crisis periods are not fully anticipated by the model.  
+
+- **Moderate Accuracy in Stable Periods:**  
+  In the absence of marked volatility, the model's predictions tend to converge more closely with observed values, indicating robustness under normal market conditions.  
+
+These results demonstrate the model's ability to provide reliable medium-term predictions while revealing its limitations when faced with sudden and extreme variations.
+
+
+### Observed Limitations
+
+Several inherent limitations of the model have been identified:
+
+- **Linearity Assumption:**  
+  - Linear regression does not model non-linear relationships or complex dynamics effectively.  
+
+- **Variable Selection:**  
+  - The absence of variables such as volatility indicators or market sentiment reduces explanatory power.  
+
+- **Crisis Periods:**  
+  - Prediction accuracy decreases significantly during major economic events.  
+
+
+## Perspectives for Improvement
+
+**Introduction of New Variables**  
+To refine predictions, new explanatory variables could be added:  
+
+**External Variables:**  
+  - Commodity prices (oil, gold)  
+  - Volatility indicators, such as the **VIX index**  
+  - Detailed sectoral data, including the performance of key sectors in the CAC 40  
+
+**Internal Variables:**  
+  - Foreign capital flows  
+  - Earnings announcements of companies within the index  
+
+**Exploration of Advanced Models**  
+Testing non-linear approaches to better capture the complexity of relationships between variables:  
+
+- Random Forests  
+- Simple or recurrent neural networks (**MLP**, **LSTM**)  
+- Boosting models (**XGBoost**, **LightGBM**)  
+
+These techniques may better capture complex and non-linear relationships between explanatory variables and the CAC 40.
+
+**Time Series-Specific Modeling**  
+Adopting models tailored to temporal data:  
+
+- **ARIMA models** to analyze trends and seasonal effects  
+- **VAR models** (Vector AutoRegressive) to study dynamic interactions between multiple indices and macroeconomic variables  
+- Hybrid models combining time series analysis and machine learning  
+
+
+# Conclusion
+
+This project highlighted the factors influencing CAC 40 fluctuations through an approach combining statistical tools, graphical analyses, and machine learning models. The study of correlations between the CAC 40 and key macroeconomic variables, such as the EUR/USD exchange rate, the S&P 500, 3-month Euribor rates, and the unemployment rate, revealed complex interactions reflecting global economic and financial dynamics.
+
+The linear regression model demonstrated a notable ability to capture the index's general trends under stable market conditions. However, it remains limited when facing abrupt variations or high volatility contexts, offering opportunities for future improvements.
+
+The results of this project provide interesting perspectives for practical applications. For example, developing an interactive model could allow for simulating hypothetical scenarios, such as a sudden rise in Euribor rates or significant variations in the S&P 500. Integrating these features into an **R Shiny** interface would enable real-time prediction exploration, enhancing their usefulness for investors.
+
+Additionally, predictions from this model could be used to optimize investment strategies. By combining these predictions with fundamental analyses, it would be possible to design active portfolio management approaches based on anticipated signals and robust models.
+
+For future research, the project offers pathways to deepen the analysis. Extending the methodology to other international indices, such as the DAX or the FTSE, could lead to enriching comparisons and a better understanding of the specificities of different markets. Exploring multivariate models that consider interactions between multiple indices and macroeconomic variables could also improve predictions by capturing more complex global dynamics.
+
+In conclusion, this project provides a solid foundation for understanding CAC 40 variations and anticipating its future trends. The identified improvement perspectives—especially through the introduction of new explanatory variables and the use of advanced models—pave the way for even more precise and useful analyses. These efforts will help develop powerful predictive tools that assist investors in navigating an ever-evolving economic and financial environment.
+
+# References
+
+- **Guibert, Quentin.**  
+  *Data Visualization Course.* Moodle Université Paris-Dauphine PSL. Accessed on January 6, 2025.
+
+- **Data on CAC40, S&P500, and Unibail-Rodamco-Westfield.**  
+  Available at: [https://www.investing.com](https://www.investing.com).
+
+- **Data on Euribor Rates and Euro/USD Exchange Rates.**  
+  Available at: [https://fred.stlouisfed.org](https://fred.stlouisfed.org).
+
+- **Data on the Unemployment Rate in France.**  
+  Available at: [https://data.ecb.europa.eu](https://data.ecb.europa.eu).
+
+
+
+- **Les Echos.**  
+  *Regional Revenue Proportions of CAC 40.* Available at: [https://www.lesechos.fr](https://www.lesechos.fr).
+
