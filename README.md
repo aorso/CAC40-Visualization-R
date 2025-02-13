@@ -13,9 +13,13 @@ The goal is to provide insights through visualizations and predictive modeling.
 
 ## Project Structure  
 /CAC40-Visualization-R 
+
 ├── README.md <- Project description 
+
 ├── CAC40_Visualization.Rmd <- RMarkdown file with all the code and analysis 
+
 ├── CAC40_Visualization.html <- Rendered HTML report 
+
 ├── /Data <- Folder containing CSV files 
 
 
